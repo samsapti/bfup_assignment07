@@ -1,6 +1,7 @@
 ﻿module ImpParser
 
     open Eval
+    open StateMonad
 
     (*
 
@@ -9,6 +10,10 @@
 
     *)
 
+    // Helper functions
+    let curry f x y = f (x, y)
+    let uncurry f (x, y) = f x y
+    
     open JParsec.TextParser             // Example parser combinator library. Use for CodeJudge.
     // open FParsecLight.TextParser     // Industrial parser-combinator library. Use for Scrabble Project.
     
@@ -33,26 +38,22 @@
     let pdo       = pstring "do"
     let pdeclare  = pstring "declare"
 
-    let whitespaceChar = satisfy System.Char.IsWhiteSpace
-    let pletter        = satisfy System.Char.IsLetter
-    let palphanumeric  = satisfy System.Char.IsLetterOrDigit
+    let whitespaceChar = satisfy System.Char.IsWhiteSpace <?> "whitespace"
+    let pletter        = satisfy System.Char.IsLetter <?> "letter"
+    let palphanumeric  = satisfy System.Char.IsLetterOrDigit <?> "alphanumeric"
 
-    let spaces         = many whitespaceChar
-    let spaces1        = many1 whitespaceChar
+    let spaces         = many whitespaceChar <?> "space"
+    let spaces1        = many1 whitespaceChar <?> "space1"
 
-    let (.>*>.) p1 p2 = p1 .>> spaces .>>. p2
-    let (.>*>) p1 p2  = p1 .>> spaces .>> p2
-    let (>*>.) p1 p2  = p1 .>> spaces >>. p2
+    let (.>*>.) a b = a .>> spaces .>>. b
+    let (.>*>) a b  = a .>> spaces .>> b
+    let (>*>.) a b  = a .>> spaces >>. b
 
-    let parenthesise p = pchar '(' >*>. p .>*> pchar ')'
-    let curlies p      = pchar '{' >*>. p .>*> pchar '}'
+    let parenthesise p = (pchar '(') >*>. p .>*> (pchar ')')
 
-    let pid =
-        let pidChar = pletter <|> pchar '_'
-        pidChar .>>. many pidChar |>> System.String.Concat
-
+    let pid = (pchar '_' <|> pletter) .>>. many (palphanumeric <|> pchar '_') |>> (fun (c1, c2) -> c1 :: c2 |> System.String.Concat)
     
-    let unop op a = op >*>. a
+    let unop op b = op >*>. b
     let binop op a b = a .>*> op .>*>. b
 
     let TermParse, tref = createParserForwardedToRef<aExp>()
@@ -60,67 +61,87 @@
     let AtomParse, aref = createParserForwardedToRef<aExp>()
 
     let AddParse = binop (pchar '+') ProdParse TermParse |>> Add <?> "Add"
-    do tref.Value <- choice [AddParse; ProdParse]
+    let SubParse = binop (pchar '-') ProdParse TermParse |>> Sub <?> "Add"
 
-    let SubParse = binop (pchar '-') ProdParse TermParse |>> Sub <?> "Sub"
-    do tref.Value <- choice [SubParse; ProdParse]
+    do tref.Value <- choice [AddParse; SubParse; ProdParse]
 
     let MulParse = binop (pchar '*') AtomParse ProdParse |>> Mul <?> "Mul"
-    do pref.Value <- choice [MulParse; AtomParse]
-
     let DivParse = binop (pchar '/') AtomParse ProdParse |>> Div <?> "Div"
-    do pref.Value <- choice [DivParse; AtomParse]
+    let ModParse = binop (pchar '%') AtomParse ProdParse |>> Mod <?> "Div"
 
-    let ModParse = binop (pchar '%') AtomParse ProdParse |>> Mod <?> "Mod"
-    do pref.Value <- choice [ModParse; AtomParse]
-
-    let NegParse = unop (pchar '-') AtomParse |>> (fun a -> Mul (a, N -1)) <?> "Int"
-    do pref.Value <- choice [NegParse; AtomParse]
-
-    let PVParse = unop pPointValue AtomParse |>> PV <?> "PV"
-    do pref.Value <- choice [PVParse; AtomParse]
-
-    let VParse = pid |>> V <?> "V"
-    do pref.Value <- choice [VParse; AtomParse]
+    do pref.Value <- choice [MulParse; DivParse; ModParse; AtomParse]
+    
+    let ParParse = parenthesise TermParse
 
     let NParse   = pint32 |>> N <?> "Int"
-    let ParParse = parenthesise TermParse
-    do aref.Value <- choice [NParse; ParParse]
+    let VParse   = pid |>> V <?> "string"
+    let NegParse = unop (pchar '-') pint32 |>> fun i -> Mul(N (-1), N i)
+    let PVParse  = pPointValue >*>. ParParse |>> PV <?> "Point value"
 
-    let AexpParse = TermParse 
+    let AexpParse = TermParse
+    let AParParse = parenthesise AexpParse
+   
+    let CexpParse, cref = createParserForwardedToRef<cExp>()
+    let CParParse = parenthesise CexpParse
 
-    let CexpParse = pstring "not implemented"
+    let CParse = (pchar '\'') >>. anyChar .>> (pchar '\'') |>> C <?> "Char"
+    let TUParse = pToUpper >*>. CParParse |>> ToUpper <?> "To upper"
+    let TLParse = pToLower >*>. CParParse |>> ToLower <?> "To lower"
+    let CVParse = pCharValue >*>. AParParse |>> CV <?> "Char value"
+    let ITCParse = pIntToChar >*>. AParParse |>> IntToChar <?> "Int to char"
 
-    let BexpParse = pstring "not implemented"
-
-    let stmntParse = pstring "not implemented"
-
-(* These five types will move out of this file once you start working on the project *)
-    type coord      = int * int
-    type squareProg = Map<int, string>
-    type boardProg  = {
-            prog       : string;
-            squares    : Map<int, squareProg>
-            usedSquare : int
-            center     : coord
+    let CTIParse = pCharToInt >*>. CParParse |>> CharToInt <?> "Char to int"
     
-            isInfinite : bool   // For pretty-printing purposes only
-            ppSquare   : string // For pretty-printing purposes only
-        }
+    do cref.Value <- choice [ITCParse; CParse; TUParse; TLParse; CVParse]
+    do aref.Value <- choice [CTIParse; NegParse; PVParse; ParParse; VParse; NParse;]
 
+    let BTermParse, btref = createParserForwardedToRef<bExp>()
+    let BProdParse, bpref = createParserForwardedToRef<bExp>()
+    let BAtomParse, baref = createParserForwardedToRef<bExp>()
+
+    let ConjParse = binop (pstring "/\\") BProdParse BTermParse |>> Conj <?> "Conjunction"
+    let DisjParse = binop (pstring "\\/") BProdParse BTermParse |>> uncurry (.||.) <?> "Disjunction"
+    
+    do btref.Value <- choice [ConjParse; DisjParse; BProdParse]
+
+    let EqParse = binop (pchar '=') AexpParse AexpParse |>> AEq <?> "Equals"
+    let NeqParse = binop (pstring "<>") AexpParse AexpParse |>> AEq |>> Not <?> "Not equals"
+    let LTParse = binop (pchar '<') AexpParse AexpParse |>> ALt <?> "Less than"
+    let LTEqParse = binop (pstring "<=") AexpParse AexpParse |>> uncurry (.<=.) <?> "Less than or equal"
+    let GTParse = binop (pchar '>') AexpParse AexpParse |>> uncurry (.>.) <?> "Greater than"
+    let GTEqParse = binop (pstring ">=") AexpParse AexpParse |>> uncurry (.>=.) <?> "Greater than or equal"
+    let TTParse = pTrue |>> (fun _ -> TT) <?> "true"
+    let FFParse = pFalse |>> (fun _ -> FF) <?> "false"
+    
+    do bpref.Value <- choice [EqParse; NeqParse; LTParse; LTEqParse; GTParse; GTEqParse; BAtomParse]
+
+    let NotParse = (pchar '~') >*>. BAtomParse |>> Not <?> "Not"
+    let IsLetterParse = pIsLetter >*>. CParParse |>> IsLetter <?> "Is letter"
+    let IsVowelParse = pIsVowel >*>. CParParse |>> IsVowel <?> "Is vowel"
+    let IsDigitParse = pIsDigit >*>. CParParse |>> IsDigit <?> "Is digit"
+
+    let BParParse = parenthesise BTermParse
+
+    do baref.Value <- choice [NotParse; IsLetterParse; IsVowelParse; IsDigitParse; BParParse; TTParse; FFParse]
+
+    let BexpParse = BTermParse
+
+    let stmParse = pstring "not implemented"
+
+    (* The rest of your parser goes here *)
     type word   = (char * int) list
+    type squareFun = word -> int -> int -> Result<int, Error>
     type square = Map<int, squareFun>
-
-    let parseSquareProg _ = failwith "not implemented"
-
-    let parseBoardProg _ = failwith "not implemented"
-
-    type boardFun2 = coord -> StateMonad.Result<square option, StateMonad.Error>
+    
+    type boardFun2 = coord -> Result<square option, Error>
+        
     type board = {
         center        : coord
         defaultSquare : square
         squares       : boardFun2
     }
+    
+    // Default (unusable) board in case you are not implementing a parser for the DSL.
+    //let mkBoard : boardProg -> board = fun _ -> {center = (0,0); defaultSquare = Map.empty; squares = fun _ -> Success (Some Map.empty)}
 
-    let mkBoard (bp : boardProg) = failwith "not implemented"
-
+// #load "JParsec.fs" "StateMonad.fs" "Eval.fs" "Parser.fs";; open JParsec.TextParser;; open ImpParser;;

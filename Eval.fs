@@ -4,12 +4,34 @@
 
     (* Code for testing *)
 
-    let hello = [(* INSERT YOUR DEFINITON OF HELLO HERE.*)] 
+    let hello = [('H', 4); ('E', 1); ('L', 1); ('L', 1); ('O', 1);]
     let state = mkState [("x", 5); ("y", 42)] hello ["_pos_"; "_result_"]
     let emptyState = mkState [] [] []
     
-    let add a b = failwith "Not implemented"      
-    let div a b = failwith "Not implemented"      
+    let add (a:SM<int>) (b:SM<int>) =
+        a >>=
+        (fun v1 -> b >>= (fun v2 -> ret(v1 + v2)))
+        
+    let sub (a:SM<int>) (b:SM<int>) =
+        a >>=
+        (fun v1 -> b >>= (fun v2 -> ret(v1 - v2)))
+        
+    let mul (a:SM<int>) (b:SM<int>) =
+        a >>=
+        (fun v1 -> b >>= (fun v2 -> ret(v1 * v2)))
+        
+    
+    let div a b =
+        a >>=
+        (fun v1 -> b >>= (fun v2 -> match v2 with
+                                    | v2 when v2 = 0 -> fail(DivisionByZero)
+                                    | _ -> ret(v1 / v2)))
+    
+    let modu a b =
+        a >>=
+        (fun v1 -> b >>= (fun v2 -> match v2 with
+                                    | v2 when v2 = 0 -> fail(DivisionByZero)
+                                    | _ -> ret(v1 % v2)))
 
     type aExp =
         | N of int
@@ -22,7 +44,6 @@
         | Div of aExp * aExp
         | Mod of aExp * aExp
         | CharToInt of cExp
-
     and cExp =
        | C  of char  (* Character value *)
        | CV of aExp  (* Character lookup at word index *)
@@ -62,11 +83,43 @@
     let (.>=.) a b = ~~(a .<. b)                (* numeric greater than or equal to *)
     let (.>.) a b = ~~(a .=. b) .&&. (a .>=. b) (* numeric greater than *)    
 
-    let arithEval a : SM<int> = failwith "Not implemented"      
+    let rec arithEval (a:aExp) : SM<int> =
+        match a with
+            | N n -> ret(n)
+            | V v -> lookup v
+            | WL -> wordLength
+            | PV v -> arithEval(v) >>= (pointValue)
+            | Add (a, b) -> add (arithEval a)  (arithEval b)
+            | Sub (a, b) -> sub (arithEval a) (arithEval b)
+            | Mul (a, b) -> mul (arithEval a) (arithEval b)
+            | Div (a,b) -> div (arithEval a) (arithEval b)
+            | Mod (a, b) -> modu (arithEval a) (arithEval b)
+            | CharToInt c -> charEval c >>= (fun c -> ret(int(c)))
+                
+    and charEval c : SM<char> =
+        match c with
+            | C c -> ret c
+            | CV a -> arithEval(a) >>= characterValue
+            | ToLower c -> charEval c >>= (fun c -> ret (System.Char.ToLower c))
+            | ToUpper c -> charEval c >>= (fun c -> ret (System.Char.ToUpper c))
+            | IntToChar i -> arithEval i >>= (fun i -> ret(char(i)))
 
-    let charEval c : SM<char> = failwith "Not implemented"      
-
-    let boolEval b : SM<bool> = failwith "Not implemented"
+    let isVowel l =
+        match System.Char.ToUpper l with
+        | 'A' | 'E' | 'I' | 'O' | 'U' -> true
+        | _ -> false
+    
+    let rec boolEval b : SM<bool> =
+        match b with
+            | TT -> ret true
+            | FF -> ret false
+            | AEq (a, b) -> arithEval a >>= (fun i1 -> arithEval b >>= (fun i2 -> ret(i1 = i2)))
+            | ALt (a, b) -> arithEval a >>= (fun i1 -> arithEval b >>= (fun i2 -> ret(i1 < i2)))
+            | Not b -> boolEval b >>= (fun b -> ret(not b))
+            | Conj (a, b) -> boolEval a >>= (fun b1 -> boolEval b >>= (fun b2 -> ret(b1 && b2)))
+            | IsVowel c -> charEval c >>= (fun c -> ret(isVowel c))
+            | IsLetter c -> charEval c >>= (fun c -> ret(System.Char.IsLetter c))
+            | IsDigit c -> charEval c >>= (fun c -> ret(System.Char.IsDigit c))
 
 
     type stm =                (* statements *)
@@ -97,15 +150,25 @@
 
     let stmntEval2 stm = failwith "Not implemented"
 
-(* Part 4 *) 
+(* Part 4 (Optional) *) 
 
     type word = (char * int) list
     type squareFun = word -> int -> int -> Result<int, Error>
 
     let stmntToSquareFun stm = failwith "Not implemented"
 
+
     type coord = int * int
 
-    type boardFun = coord -> squareFun option
+    type boardFun = coord -> Result<squareFun option, Error> 
 
     let stmntToBoardFun stm m = failwith "Not implemented"
+
+    type board = {
+        center        : coord
+        defaultSquare : squareFun
+        squares       : boardFun
+    }
+
+    let mkBoard c defaultSq boardStmnt ids = failwith "Not implemented"
+    
