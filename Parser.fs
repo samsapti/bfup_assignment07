@@ -50,11 +50,16 @@
     let (>*>.) a b  = a .>> spaces >>. b
 
     let parenthesise p = (pchar '(') >*>. p .>*> (pchar ')')
+    let curlysise p = (pchar '{') >*>. p .>*> (pchar '}')
 
     let pid = (pchar '_' <|> pletter) .>>. many (palphanumeric <|> pchar '_') |>> (fun (c1, c2) -> c1 :: c2 |> System.String.Concat)
     
     let unop op b = op >*>. b
     let binop op a b = a .>*> op .>*>. b
+
+    (*
+        aExp parser
+    *)
 
     let TermParse, tref = createParserForwardedToRef<aExp>()
     let ProdParse, pref = createParserForwardedToRef<aExp>()
@@ -62,17 +67,14 @@
 
     let AddParse = binop (pchar '+') ProdParse TermParse |>> Add <?> "Add"
     let SubParse = binop (pchar '-') ProdParse TermParse |>> Sub <?> "Add"
-
     do tref.Value <- choice [AddParse; SubParse; ProdParse]
 
     let MulParse = binop (pchar '*') AtomParse ProdParse |>> Mul <?> "Mul"
     let DivParse = binop (pchar '/') AtomParse ProdParse |>> Div <?> "Div"
     let ModParse = binop (pchar '%') AtomParse ProdParse |>> Mod <?> "Div"
-
     do pref.Value <- choice [MulParse; DivParse; ModParse; AtomParse]
     
     let ParParse = parenthesise TermParse
-
     let NParse   = pint32 |>> N <?> "Int"
     let VParse   = pid |>> V <?> "string"
     let NegParse = unop (pchar '-') pint32 |>> fun i -> Mul(N (-1), N i)
@@ -80,7 +82,11 @@
 
     let AexpParse = TermParse
     let AParParse = parenthesise AexpParse
-   
+
+    (*
+        cExp parser
+    *)
+    
     let CexpParse, cref = createParserForwardedToRef<cExp>()
     let CParParse = parenthesise CexpParse
 
@@ -89,11 +95,14 @@
     let TLParse = pToLower >*>. CParParse |>> ToLower <?> "To lower"
     let CVParse = pCharValue >*>. AParParse |>> CV <?> "Char value"
     let ITCParse = pIntToChar >*>. AParParse |>> IntToChar <?> "Int to char"
+    do cref.Value <- choice [ITCParse; CParse; TUParse; TLParse; CVParse]
 
     let CTIParse = pCharToInt >*>. CParParse |>> CharToInt <?> "Char to int"
-    
-    do cref.Value <- choice [ITCParse; CParse; TUParse; TLParse; CVParse]
     do aref.Value <- choice [CTIParse; NegParse; PVParse; ParParse; VParse; NParse;]
+
+    (*
+        bExp parser
+    *)
 
     let BTermParse, btref = createParserForwardedToRef<bExp>()
     let BProdParse, bpref = createParserForwardedToRef<bExp>()
@@ -101,7 +110,6 @@
 
     let ConjParse = binop (pstring "/\\") BProdParse BTermParse |>> Conj <?> "Conjunction"
     let DisjParse = binop (pstring "\\/") BProdParse BTermParse |>> uncurry (.||.) <?> "Disjunction"
-    
     do btref.Value <- choice [ConjParse; DisjParse; BProdParse]
 
     let EqParse = binop (pchar '=') AexpParse AexpParse |>> AEq <?> "Equals"
@@ -112,21 +120,40 @@
     let GTEqParse = binop (pstring ">=") AexpParse AexpParse |>> uncurry (.>=.) <?> "Greater than or equal"
     let TTParse = pTrue |>> (fun _ -> TT) <?> "true"
     let FFParse = pFalse |>> (fun _ -> FF) <?> "false"
-    
     do bpref.Value <- choice [EqParse; NeqParse; LTParse; LTEqParse; GTParse; GTEqParse; BAtomParse]
 
+    let BParParse = parenthesise BTermParse
     let NotParse = (pchar '~') >*>. BAtomParse |>> Not <?> "Not"
     let IsLetterParse = pIsLetter >*>. CParParse |>> IsLetter <?> "Is letter"
     let IsVowelParse = pIsVowel >*>. CParParse |>> IsVowel <?> "Is vowel"
     let IsDigitParse = pIsDigit >*>. CParParse |>> IsDigit <?> "Is digit"
-
-    let BParParse = parenthesise BTermParse
-
     do baref.Value <- choice [NotParse; IsLetterParse; IsVowelParse; IsDigitParse; BParParse; TTParse; FFParse]
 
     let BexpParse = BTermParse
 
-    let stmParse = pstring "not implemented"
+    (*
+        stm parser
+    *)
+
+    let sTermParse, stref = createParserForwardedToRef<stm>()
+    let sProdParse, spref = createParserForwardedToRef<stm>()
+    let sAtomParse, saref = createParserForwardedToRef<stm>()
+    
+    let SeqParse = binop (pchar ';') sProdParse sTermParse |>> Seq
+    do stref.Value <- choice [SeqParse; sProdParse]
+
+    let AssParse = binop (pstring ":=") pid AexpParse |>> Ass
+    do spref.Value <- choice [AssParse; sAtomParse]
+    
+    let sCurParse = curlysise sTermParse
+    let ifThenParse =  pif >*>. BParParse .>*> pthen .>*>. sCurParse
+    let DeclareParse = pdeclare .>> spaces1 >>. pid |>> Declare <?> "Declare"
+    let ITEParse = ifThenParse .>*> pelse .>*>. sCurParse |>> (fun ((i, t), e) -> ITE (i, t, e)) <?> "If then else"
+    let ITParse = ifThenParse |>> (fun (i, t) -> ITE (i, t, Skip)) <?> "If then"
+    let WhileParse = pwhile >*>. BParParse .>*> pdo .>*>. sCurParse |>> While <?> "While"
+    do saref.Value <- choice [DeclareParse; ITEParse; ITParse; WhileParse]
+
+    let stmntParse = sTermParse
 
     (* The rest of your parser goes here *)
     type word   = (char * int) list
